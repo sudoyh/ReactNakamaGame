@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from "react";
 const PlayView = () => {
     const [isHit, setIsHit] = useState(false);
     const setTimeOutRef = useRef(null);
+    const [performanceStats, setPerformanceStats] = useState({});
+    const [serverStats, setServerStats] = useState({});
 
     const gameApp = window.pc.app.gameApp;
     if (!gameApp.playerMap) {
@@ -12,10 +14,30 @@ const PlayView = () => {
     const OP_CODE_POSITION = 1;
     const OP_CODE_INITIAL_DATA = 2;
     const OP_CODE_PLAYER_SPAWN = 3;
+    const OP_CODE_PERFORMANCE = 4;
+
+    // Performance monitoring
+    useEffect(() => {
+        const updatePerformanceStats = () => {
+            const entries = performance.getEntriesByType('measure');
+            const stats = {};
+            entries.forEach(entry => {
+                stats[entry.name] = `${entry.duration.toFixed(2)}ms`;
+            });
+            setPerformanceStats(stats);
+            console.log('Performance Stats:', stats);
+        };
+
+        // Update stats every second
+        const interval = setInterval(updatePerformanceStats, 1000);
+
+        return () => clearInterval(interval);
+    }, []);
 
     useEffect(() => {
         if (!gameApp) return;
         gameApp.socket.onmatchdata = (matchState) => {
+            performance.mark('matchdata-start');
             let jsonResult = JSON.parse(String.fromCharCode.apply(null, new Uint8Array(matchState.data)))
             switch (matchState.op_code) {
                 case OP_CODE_POSITION:
@@ -30,12 +52,18 @@ const PlayView = () => {
                     // 전에 들어온 사람 x
                     // 내 이후에 들어온 상대방 
                     break;
+                case OP_CODE_PERFORMANCE:
+                    handleServerPerformance(jsonResult)
+                    break;
                 default:
                     break;
             }
+            performance.mark('matchdata-end');
+            performance.measure('Match Data Processing', 'matchdata-start', 'matchdata-end');
         }
 
         gameApp.socket.onmatchpresence = (matchPresence) => {
+            performance.mark('presence-start');
             console.log('matchPresence', matchPresence);
             const match_id = matchPresence.match_id;
             const leaves = matchPresence.leaves;
@@ -44,9 +72,10 @@ const PlayView = () => {
             if (leaves && leaves.length > 0) {
                 leaves.forEach(player => destroyPlayer(player.user_id));
             }
+            performance.mark('presence-end');
+            performance.measure('Presence Processing', 'presence-start', 'presence-end');
         }
-
-    }, [])
+    }, []);
 
     const destroyPlayer = (user_id) => {
         const playerMap = gameApp.playerMap;
@@ -104,6 +133,7 @@ const PlayView = () => {
     }
 
     const onPlayerMove = (data) => {
+        performance.mark('move-start');
         if (data.user_id === window.pc.app.gameApp.user.user_id) {
             return;
         }
@@ -113,7 +143,16 @@ const PlayView = () => {
             const vectorPosition = new window.pc.Vec3(position[0], position[1], position[2]);
             playerEntity.script.pointAndClick.movePlayerTo(vectorPosition);
         }
+        performance.mark('move-end');
+        performance.measure('Player Movement', 'move-start', 'move-end');
     }
+
+    const handleServerPerformance = (data) => {
+        setServerStats(prev => ({
+            ...prev,
+            [data.operation]: `${(data.duration * 1000).toFixed(2)}ms`
+        }));
+    };
 
     useEffect(() => {
         window.pc.app.on("boxHit", listener);
@@ -140,6 +179,16 @@ const PlayView = () => {
     return (
         <div>
             {isHit && <div className='Popup'>Touched!!!</div>}
+            <div style={{ position: 'fixed', top: 10, right: 10, background: 'rgba(0,0,0,0.7)', color: 'white', padding: 10 }}>
+                <h4>Client Performance</h4>
+                {Object.entries(performanceStats).map(([key, value]) => (
+                    <div key={key}>{key}: {value}</div>
+                ))}
+                <h4>Server Performance</h4>
+                {Object.entries(serverStats).map(([key, value]) => (
+                    <div key={key}>{key}: {value}</div>
+                ))}
+            </div>
         </div>
     )
 }
